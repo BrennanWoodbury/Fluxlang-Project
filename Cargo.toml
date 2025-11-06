@@ -3,7 +3,6 @@ members = [
     "core",
     "vm",
     "compiler",
-    "cli-fluxscript",
     "cli-fluxo"
 ]
 

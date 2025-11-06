@@ -1,9 +1,19 @@
+//! Core crate entry point.
+//!
+//! This module wires together memory utilities, syntax structures, and
+//! shared diagnostics for the rest of the FluxLang workspace.
+
 use std::alloc::{Layout, alloc, dealloc};
 use std::ptr::NonNull;
 
 use block::{Block, BlockError, BlockPtr, BlockSize};
 
+pub mod ast;
 pub mod block;
+pub mod diag;
+pub mod parser;
+pub mod token;
+pub mod types;
 
 pub fn add(left: u64, right: u64) -> u64 {
     left + right

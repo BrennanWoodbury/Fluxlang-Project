@@ -1,3 +1,8 @@
+//! Immix-inspired block allocator primitives.
+//!
+//! The types in this module manage raw memory blocks, line metadata, and
+//! allocation headers that back the FluxLang runtime.
+
 use std::cell::UnsafeCell;
 use std::fmt;
 use std::marker::PhantomData;
