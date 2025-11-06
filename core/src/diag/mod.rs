@@ -9,3 +9,18 @@ pub mod span;
 
 pub use error::{ErrorObject, StackFrame};
 pub use span::Span;
+
+/// Parser-specific diagnostic codes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ParseErrorCode {
+    UnexpectedToken,
+    ExpectedItem,
+    ExpectedUsePath,
+    ExpectedFunction,
+    ExpectedExpression,
+    ExpectedArrayElement,
+    ExpectedMapEntry,
+    InvalidIntegerLiteral,
+    InvalidFloatLiteral,
+    InvalidArrayLength,
+}

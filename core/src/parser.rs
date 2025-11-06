@@ -11,12 +11,12 @@
 pub mod lexer;
 
 use crate::ast::nodes::{
-    ArrayType, Block, ConstDecl, Expr, FieldDecl, FnDecl, FnSig, ForStmt, GenericParams, Ident,
-    IfStmt, ImplBlock, InterfaceDecl, Item, LetDecl, MapType, ObjDecl, Param, Stmt, TypeExpr,
-    UseDecl, VarDecl, Visibility,
+    ArrayLiteral, ArrayType, Block, ConstDecl, Expr, FieldDecl, FnDecl, FnSig, ForStmt,
+    GenericParams, Ident, IfStmt, ImplBlock, InterfaceDecl, Item, LetDecl, MapEntry, MapLiteral,
+    MapType, ObjDecl, Param, Stmt, TypeExpr, UseDecl, VarDecl, Visibility,
 };
 use crate::ast::{BinaryOp, TokenKind, TypeIdentKind, UnaryOp};
-use crate::diag::Span;
+use crate::diag::{ParseErrorCode, Span};
 use lexer::{LexError, Lexer, Token};
 use std::str::FromStr;
 
@@ -34,6 +34,7 @@ pub struct ParseError {
     pub span: Span,
     pub expected: Vec<String>,
     pub found: Option<TokenKind>,
+    pub code: ParseErrorCode,
 }
 
 impl ParseError {
@@ -43,7 +44,13 @@ impl ParseError {
             span,
             expected: Vec::new(),
             found: None,
+            code: ParseErrorCode::UnexpectedToken,
         }
+    }
+
+    fn with_code(mut self, code: ParseErrorCode) -> Self {
+        self.code = code;
+        self
     }
 
     fn with_expected(mut self, expected: impl Into<String>) -> Self {
@@ -64,6 +71,7 @@ impl From<LexError> for ParseError {
             span: err.span,
             expected: Vec::new(),
             found: None,
+            code: ParseErrorCode::UnexpectedToken,
         }
     }
 }
@@ -166,7 +174,8 @@ impl Parser {
                 _ => {
                     self.push_error(
                         ParseError::new("expected an item", self.current_span())
-                            .with_expected("item keyword (fn, obj, interface, impl, use)"),
+                            .with_expected("item keyword (fn, obj, interface, impl, use)")
+                            .with_code(ParseErrorCode::ExpectedItem),
                     );
                     self.synchronize_item();
                 }
@@ -201,7 +210,8 @@ impl Parser {
         if path.is_empty() {
             self.push_error(
                 ParseError::new("`use` requires at least one path segment", kw_span)
-                    .with_expected("identifier"),
+                    .with_expected("identifier")
+                    .with_code(ParseErrorCode::ExpectedUsePath),
             );
         }
 
@@ -362,7 +372,8 @@ impl Parser {
             _ => {
                 self.push_error(
                     ParseError::new("expected `fn` inside interface", self.current_span())
-                        .with_expected("fn"),
+                        .with_expected("fn")
+                        .with_code(ParseErrorCode::ExpectedFunction),
                 );
                 None
             }
@@ -712,11 +723,13 @@ impl Parser {
             TokenKind::IntLit { .. } => self.parse_int_literal()?,
             TokenKind::FloatLit { .. } => self.parse_float_literal()?,
             TokenKind::StringLit { .. } => self.parse_string_literal()?,
-            TokenKind::LBracket => self.parse_range_literal()?,
+            TokenKind::LBracket => self.parse_bracket_literal()?,
+            TokenKind::LBrace => self.parse_map_literal()?,
             _ => {
                 self.push_error(
                     ParseError::new("expected expression", self.current_span())
-                        .with_expected("literal or identifier"),
+                        .with_expected("literal or identifier")
+                        .with_code(ParseErrorCode::ExpectedExpression),
                 );
                 return None;
             }
@@ -762,38 +775,158 @@ impl Parser {
         Some(args)
     }
 
-    fn parse_range_literal(&mut self) -> Option<Expr> {
-        self.expect_token(TokenKind::LBracket, "`[` to start range literal")?;
-        let start = self.parse_expression()?;
-        self.expect_token(TokenKind::Comma, "`,` between range bounds")?;
-        let end = self.parse_expression()?;
+    fn parse_bracket_literal(&mut self) -> Option<Expr> {
+        self.expect_token(TokenKind::LBracket, "`[` to start literal")?;
 
-        let inclusive_end = match self.current_kind() {
+        if matches!(self.current_kind(), TokenKind::RBracket) {
+            self.bump();
+            return Some(Expr::Array(ArrayLiteral {
+                elements: Vec::new(),
+            }));
+        }
+
+        let first = self.parse_expression()?;
+
+        match self.current_kind() {
             TokenKind::RBracket => {
                 self.bump();
-                true
+                Some(Expr::Array(ArrayLiteral {
+                    elements: vec![first],
+                }))
             }
-            TokenKind::RParen => {
+            TokenKind::Comma => {
                 self.bump();
-                false
+
+                if matches!(self.current_kind(), TokenKind::RBracket) {
+                    self.bump();
+                    return Some(Expr::Array(ArrayLiteral {
+                        elements: vec![first],
+                    }));
+                }
+
+                let second = self.parse_expression()?;
+
+                match self.current_kind() {
+                    TokenKind::RParen => {
+                        self.bump();
+                        Some(Expr::Range {
+                            start: Box::new(first),
+                            end: Box::new(second),
+                            inclusive_end: false,
+                        })
+                    }
+                    TokenKind::RBracket => {
+                        self.bump();
+                        Some(Expr::Range {
+                            start: Box::new(first),
+                            end: Box::new(second),
+                            inclusive_end: true,
+                        })
+                    }
+                    TokenKind::Comma => {
+                        let mut elements = vec![first, second];
+                        loop {
+                            self.bump();
+                            if matches!(self.current_kind(), TokenKind::RBracket) {
+                                self.bump();
+                                return Some(Expr::Array(ArrayLiteral { elements }));
+                            }
+
+                            let expr = match self.parse_expression() {
+                                Some(expr) => expr,
+                                None => return None,
+                            };
+                            elements.push(expr);
+
+                            match self.current_kind() {
+                                TokenKind::Comma => continue,
+                                TokenKind::RBracket => {
+                                    self.bump();
+                                    return Some(Expr::Array(ArrayLiteral { elements }));
+                                }
+                                _ => {
+                                    self.push_error(
+                                        ParseError::new(
+                                            "expected `,` or `]` after array element",
+                                            self.current_span(),
+                                        )
+                                        .with_expected("`,` or `]`")
+                                        .with_code(ParseErrorCode::ExpectedArrayElement),
+                                    );
+                                    return None;
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        self.push_error(
+                            ParseError::new(
+                                "expected `]`, `)` or `,` after bracket literal element",
+                                self.current_span(),
+                            )
+                            .with_expected("`]`, `)` or `,`")
+                            .with_code(ParseErrorCode::ExpectedArrayElement),
+                        );
+                        None
+                    }
+                }
             }
             _ => {
                 self.push_error(
                     ParseError::new(
-                        "expected `]` or `)` after range bounds",
+                        "expected `]` or `,` after bracket literal element",
                         self.current_span(),
                     )
-                    .with_expected("`]` or `)`"),
+                    .with_expected("`]` or `,`")
+                    .with_code(ParseErrorCode::ExpectedArrayElement),
                 );
-                return None;
+                None
             }
-        };
+        }
+    }
 
-        Some(Expr::Range {
-            start: Box::new(start),
-            end: Box::new(end),
-            inclusive_end,
-        })
+    fn parse_map_literal(&mut self) -> Option<Expr> {
+        self.expect_token(TokenKind::LBrace, "`{` to start map literal")?;
+
+        if matches!(self.current_kind(), TokenKind::RBrace) {
+            self.bump();
+            return Some(Expr::Map(MapLiteral {
+                entries: Vec::new(),
+            }));
+        }
+
+        let mut entries = Vec::new();
+
+        loop {
+            let key = self.parse_expression()?;
+            self.expect_token(TokenKind::Colon, "`:` between map key and value")?;
+            let value = self.parse_expression()?;
+            entries.push(MapEntry { key, value });
+
+            match self.current_kind() {
+                TokenKind::Comma => {
+                    self.bump();
+                    if matches!(self.current_kind(), TokenKind::RBrace) {
+                        self.bump();
+                        break;
+                    }
+                }
+                TokenKind::RBrace => {
+                    self.bump();
+                    break;
+                }
+                _ => {
+                    self.push_error(
+                        ParseError::new("expected `,` or `}` after map entry", self.current_span())
+                            .with_expected("`,` or `}`")
+                            .with_code(ParseErrorCode::ExpectedMapEntry),
+                    );
+                    return None;
+                }
+            }
+        }
+
+        Some(Expr::Map(MapLiteral { entries }))
     }
 
     fn parse_int_literal(&mut self) -> Option<Expr> {
@@ -804,7 +937,8 @@ impl Parser {
                 Err(_) => {
                     self.push_error(
                         ParseError::new("integer literal out of range", token.span)
-                            .with_found(TokenKind::IntLit { value, ty }),
+                            .with_found(TokenKind::IntLit { value, ty })
+                            .with_code(ParseErrorCode::InvalidIntegerLiteral),
                     );
                     None
                 }
@@ -825,7 +959,8 @@ impl Parser {
                 Err(_) => {
                     self.push_error(
                         ParseError::new("invalid float literal", token.span)
-                            .with_found(TokenKind::FloatLit { value, ty }),
+                            .with_found(TokenKind::FloatLit { value, ty })
+                            .with_code(ParseErrorCode::InvalidFloatLiteral),
                     );
                     None
                 }
@@ -942,7 +1077,8 @@ impl Parser {
                                             "array length must be a positive integer",
                                             length_token.span,
                                         )
-                                        .with_found(length_token.kind.clone()),
+                                        .with_found(length_token.kind.clone())
+                                        .with_code(ParseErrorCode::InvalidArrayLength),
                                     );
                                     None
                                 }
@@ -953,7 +1089,8 @@ impl Parser {
                                         "array length must be a positive integer",
                                         length_token.span,
                                     )
-                                    .with_found(length_token.kind.clone()),
+                                    .with_found(length_token.kind.clone())
+                                    .with_code(ParseErrorCode::InvalidArrayLength),
                                 );
                                 None
                             }
@@ -1421,6 +1558,17 @@ mod tests {
     #[test]
     fn parse_tuple_and_range_literals() {
         let source = "fn demo() { let t = (1, 2, 3); let single = (value,); let unit = (); let span = [0, 10); let inclusive = [0, 10]; }";
+        let output = parse_ok(source);
+        assert!(
+            output.errors.is_empty(),
+            "parse errors: {:?}",
+            output.errors
+        );
+    }
+
+    #[test]
+    fn parse_array_and_map_literals() {
+        let source = "fn literals() { let empty = []; let single = [value]; let pair = [left, right,]; let list = [1, 2, 3]; let mapping = { key: 1, other: 2, }; }";
         let output = parse_ok(source);
         assert!(
             output.errors.is_empty(),

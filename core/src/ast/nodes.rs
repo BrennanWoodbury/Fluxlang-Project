@@ -190,6 +190,8 @@ pub enum Expr {
         ty: Option<u32>,
     },
     Tuple(Vec<Expr>),
+    Array(ArrayLiteral),
+    Map(MapLiteral),
     StringLit {
         value: String,
         size: Option<u32>,
@@ -220,6 +222,22 @@ pub enum Expr {
         ty: TypeExpr,
         fields: Vec<(Ident, Expr)>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayLiteral {
+    pub elements: Vec<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapLiteral {
+    pub entries: Vec<MapEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapEntry {
+    pub key: Expr,
+    pub value: Expr,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
