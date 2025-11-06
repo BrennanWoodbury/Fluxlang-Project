@@ -227,11 +227,13 @@ pub enum Expr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ArrayLiteral {
     pub elements: Vec<Expr>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MapLiteral {
     pub entries: Vec<MapEntry>,
+    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

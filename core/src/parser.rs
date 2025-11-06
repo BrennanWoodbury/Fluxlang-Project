@@ -782,6 +782,7 @@ impl Parser {
             self.bump();
             return Some(Expr::Array(ArrayLiteral {
                 elements: Vec::new(),
+                span: None,
             }));
         }
 
@@ -792,6 +793,7 @@ impl Parser {
                 self.bump();
                 Some(Expr::Array(ArrayLiteral {
                     elements: vec![first],
+                    span: None,
                 }))
             }
             TokenKind::Comma => {
@@ -801,6 +803,7 @@ impl Parser {
                     self.bump();
                     return Some(Expr::Array(ArrayLiteral {
                         elements: vec![first],
+                        span: None,
                     }));
                 }
 
@@ -829,7 +832,10 @@ impl Parser {
                             self.bump();
                             if matches!(self.current_kind(), TokenKind::RBracket) {
                                 self.bump();
-                                return Some(Expr::Array(ArrayLiteral { elements }));
+                                return Some(Expr::Array(ArrayLiteral {
+                                    elements,
+                                    span: None,
+                                }));
                             }
 
                             let expr = match self.parse_expression() {
@@ -842,7 +848,10 @@ impl Parser {
                                 TokenKind::Comma => continue,
                                 TokenKind::RBracket => {
                                     self.bump();
-                                    return Some(Expr::Array(ArrayLiteral { elements }));
+                                    return Some(Expr::Array(ArrayLiteral {
+                                        elements,
+                                        span: None,
+                                    }));
                                 }
                                 _ => {
                                     self.push_error(
@@ -892,6 +901,7 @@ impl Parser {
             self.bump();
             return Some(Expr::Map(MapLiteral {
                 entries: Vec::new(),
+                span: None,
             }));
         }
 
@@ -926,7 +936,10 @@ impl Parser {
             }
         }
 
-        Some(Expr::Map(MapLiteral { entries }))
+        Some(Expr::Map(MapLiteral {
+            entries,
+            span: None,
+        }))
     }
 
     fn parse_int_literal(&mut self) -> Option<Expr> {
