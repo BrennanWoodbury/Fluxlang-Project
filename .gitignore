@@ -1,3 +1,7 @@
 **/target/
 **/todo.md
 **/TODO.md
+
+**/.idea/
+**/.vscode/
+**/.vs/

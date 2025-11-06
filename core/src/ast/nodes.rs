@@ -110,6 +110,7 @@ pub struct Param {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UseDecl {
+    pub vis: Visibility,
     pub path: Vec<Ident>,
     pub alias: Option<Ident>,
 }
@@ -176,6 +177,10 @@ pub enum Expr {
     FloatLit {
         value: f64,
         ty: Option<u32>,
+    },
+    StringLit {
+        value: String,
+        size: Option<u32>,
     },
     Binary {
         op: BinaryOp,

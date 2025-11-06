@@ -17,6 +17,8 @@ pub enum TokenKind {
     KwImpl,
     KwPub,
     KwUse,
+    KwAs,
+    KwReturn,
     KwThrow,
     KwPanic,
     KwLoop,
