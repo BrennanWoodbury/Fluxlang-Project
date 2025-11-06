@@ -11,7 +11,7 @@
 pub mod lexer;
 
 use crate::ast::nodes::{
-    Block, ConstDecl, Expr, FieldDecl, FnDecl, FnSig, GenericParams, Ident, ImplBlock,
+    Block, ConstDecl, Expr, FieldDecl, FnDecl, FnSig, ForStmt, GenericParams, Ident, ImplBlock,
     InterfaceDecl, Item, LetDecl, ObjDecl, Param, Stmt, TypeExpr, UseDecl, VarDecl, Visibility,
 };
 use crate::ast::{BinaryOp, TokenKind, TypeIdentKind, UnaryOp};
@@ -213,7 +213,7 @@ impl Parser {
 
         self.expect_token(TokenKind::Semicolon, "`;` to terminate use statement");
 
-    Some(Item::Use(UseDecl { vis, path, alias }))
+        Some(Item::Use(UseDecl { vis, path, alias }))
     }
 
     fn parse_obj(&mut self, vis: Visibility) -> Option<ObjDecl> {
@@ -240,7 +240,10 @@ impl Parser {
                 }
             };
             self.expect_token(TokenKind::Semicolon, "`;` after field declaration");
-            fields.push(FieldDecl { name: field_name, ty });
+            fields.push(FieldDecl {
+                name: field_name,
+                ty,
+            });
         }
         self.expect_token(TokenKind::RBrace, "`}` to close object body");
 
@@ -415,6 +418,7 @@ impl Parser {
             TokenKind::KwReturn => self.parse_return_stmt(),
             TokenKind::KwThrow => self.parse_throw_stmt(),
             TokenKind::KwPanic => self.parse_panic_stmt(),
+            TokenKind::KwFor => self.parse_for_stmt(),
             TokenKind::KwLoop => self.parse_loop_stmt(),
             TokenKind::LBrace => self.parse_block().map(Stmt::Block),
             _ => self.parse_expr_stmt(),
@@ -514,6 +518,45 @@ impl Parser {
         Some(Stmt::Panic(value))
     }
 
+    fn parse_for_stmt(&mut self) -> Option<Stmt> {
+        self.bump();
+        self.expect_token(TokenKind::LParen, "`(` to start for header")?;
+
+        let init = if matches!(self.current_kind(), TokenKind::Semicolon) {
+            self.bump();
+            None
+        } else {
+            let stmt = self.parse_for_initializer()?;
+            self.expect_token(TokenKind::Semicolon, "`;` after for initializer")?;
+            Some(Box::new(stmt))
+        };
+
+        let cond = if matches!(self.current_kind(), TokenKind::Semicolon) {
+            self.bump();
+            None
+        } else {
+            let expr = self.parse_expression()?;
+            self.expect_token(TokenKind::Semicolon, "`;` after for condition")?;
+            Some(expr)
+        };
+
+        let step = if matches!(self.current_kind(), TokenKind::RParen) {
+            None
+        } else {
+            self.parse_expression()
+        };
+
+        self.expect_token(TokenKind::RParen, "`)` to close for header")?;
+        let body = self.parse_block()?;
+
+        Some(Stmt::For(Box::new(ForStmt {
+            init,
+            cond,
+            step,
+            body,
+        })))
+    }
+
     fn parse_loop_stmt(&mut self) -> Option<Stmt> {
         self.bump();
         let body = self.parse_block()?;
@@ -522,17 +565,8 @@ impl Parser {
 
     fn parse_expr_stmt(&mut self) -> Option<Stmt> {
         let expr = self.parse_expression()?;
-        if matches!(self.current_kind(), TokenKind::Assign) {
-            self.bump();
-            let value = self.parse_expression()?;
-            self.expect_token(TokenKind::Semicolon, "`;` after assignment");
-            return Some(Stmt::Assign {
-                target: expr,
-                value,
-            });
-        }
         self.expect_token(TokenKind::Semicolon, "`;` after expression statement");
-        Some(Stmt::Expr(expr))
+        Some(self.expr_to_stmt(expr))
     }
 
     fn parse_expression(&mut self) -> Option<Expr> {
@@ -695,6 +729,76 @@ impl Parser {
         }
     }
 
+    fn parse_for_initializer(&mut self) -> Option<Stmt> {
+        match self.current_kind() {
+            TokenKind::KwLet => self.parse_for_let_init(),
+            TokenKind::KwConst => self.parse_for_const_init(),
+            TokenKind::KwVar => self.parse_for_var_init(),
+            _ => self.parse_expression().map(|expr| self.expr_to_stmt(expr)),
+        }
+    }
+
+    fn parse_for_let_init(&mut self) -> Option<Stmt> {
+        let kw_span = self.bump().span;
+        let name = self.parse_ident("let binding name")?;
+        let ty = if matches!(self.current_kind(), TokenKind::Colon) {
+            self.bump();
+            self.parse_type_expr()
+        } else {
+            None
+        };
+        let value = if matches!(self.current_kind(), TokenKind::Assign) {
+            self.bump();
+            self.parse_expression()
+        } else {
+            None
+        };
+        Some(Stmt::Let(LetDecl {
+            name,
+            ty,
+            value,
+            span: Some(kw_span),
+        }))
+    }
+
+    fn parse_for_const_init(&mut self) -> Option<Stmt> {
+        let kw_span = self.bump().span;
+        let name = self.parse_ident("const name")?;
+        let ty = if matches!(self.current_kind(), TokenKind::Colon) {
+            self.bump();
+            self.parse_type_expr()
+        } else {
+            None
+        };
+        self.expect_token(TokenKind::Assign, "`=` in const declaration")?;
+        let value = self.parse_expression()?;
+        Some(Stmt::Const(ConstDecl {
+            name,
+            ty,
+            value,
+            span: Some(kw_span),
+        }))
+    }
+
+    fn parse_for_var_init(&mut self) -> Option<Stmt> {
+        let kw_span = self.bump().span;
+        let name = self.parse_ident("var binding name")?;
+        self.expect_token(TokenKind::Colon, "`:` after var name")?;
+        let ty = self.parse_type_expr()?;
+        let value = if matches!(self.current_kind(), TokenKind::Assign) {
+            self.bump();
+            self.parse_expression()
+        } else {
+            None
+        };
+        Some(Stmt::Var(VarDecl {
+            name,
+            ty,
+            value,
+            span: Some(kw_span),
+        }))
+    }
+
     fn parse_string_literal(&mut self) -> Option<Expr> {
         let token = self.bump();
         if let TokenKind::StringLit { value, size_suffix } = token.kind {
@@ -718,10 +822,7 @@ impl Parser {
                     };
                     if matches!(self.current_kind(), TokenKind::Lt) {
                         let args = self.parse_type_arg_list()?;
-                        Some(TypeExpr::Generic {
-                            base: ident,
-                            args,
-                        })
+                        Some(TypeExpr::Generic { base: ident, args })
                     } else {
                         Some(TypeExpr::Named(ident))
                     }
@@ -814,9 +915,7 @@ impl Parser {
     }
 
     fn expect_token(&mut self, kind: TokenKind, expected: &str) -> Option<Token> {
-        if std::mem::discriminant(self.current_kind())
-            == std::mem::discriminant(&kind)
-        {
+        if std::mem::discriminant(self.current_kind()) == std::mem::discriminant(&kind) {
             return Some(self.bump());
         }
         let found = self.current_kind().clone();
@@ -830,6 +929,7 @@ impl Parser {
 
     fn infix_binding_power(&self) -> Option<(u8, u8, BinaryOp)> {
         match self.current_kind() {
+            TokenKind::Assign => Some((PREC_ASSIGN, PREC_ASSIGN - 1, BinaryOp::Assign)),
             TokenKind::Plus => Some((PREC_SUM, PREC_SUM + 1, BinaryOp::Add)),
             TokenKind::Minus => Some((PREC_SUM, PREC_SUM + 1, BinaryOp::Sub)),
             TokenKind::Star => Some((PREC_PRODUCT, PREC_PRODUCT + 1, BinaryOp::Mul)),
@@ -851,15 +951,29 @@ impl Parser {
         }
     }
 
+    fn expr_to_stmt(&self, expr: Expr) -> Stmt {
+        match expr {
+            Expr::Binary {
+                op: BinaryOp::Assign,
+                left,
+                right,
+            } => Stmt::Assign {
+                target: *left,
+                value: *right,
+            },
+            other => Stmt::Expr(other),
+        }
+    }
+
     fn synchronize_item(&mut self) {
         while !self.is_eof() {
             match self.current_kind() {
-                TokenKind::Semicolon |
-                TokenKind::KwFn |
-                TokenKind::KwObj |
-                TokenKind::KwInterface |
-                TokenKind::KwImpl |
-                TokenKind::KwUse => {
+                TokenKind::Semicolon
+                | TokenKind::KwFn
+                | TokenKind::KwObj
+                | TokenKind::KwInterface
+                | TokenKind::KwImpl
+                | TokenKind::KwUse => {
                     if matches!(self.current_kind(), TokenKind::Semicolon) {
                         self.bump();
                     }
@@ -933,7 +1047,9 @@ impl Parser {
     }
 
     fn current_token(&self) -> &Token {
-        self.tokens.get(self.cursor).unwrap_or_else(|| self.tokens.last().unwrap())
+        self.tokens
+            .get(self.cursor)
+            .unwrap_or_else(|| self.tokens.last().unwrap())
     }
 
     fn current_span(&self) -> Span {
@@ -974,6 +1090,7 @@ const PREC_PRODUCT: u8 = 35;
 const PREC_SUM: u8 = 30;
 const PREC_COMPARISON: u8 = 25;
 const PREC_EQUALITY: u8 = 20;
+const PREC_ASSIGN: u8 = 10;
 
 fn float_suffix_bits(kind: TypeIdentKind) -> Option<u32> {
     match kind {
@@ -1011,5 +1128,15 @@ mod tests {
     fn parse_let_expression() {
         let output = parse_ok("fn foo() { let x = 1 + 2; }");
         assert!(output.errors.is_empty());
+    }
+
+    #[test]
+    fn parse_for_loop() {
+        let output = parse_ok("fn main() { for (let i = 0; i < 3; i = i + 1) { return; } }");
+        assert!(
+            output.errors.is_empty(),
+            "parse errors: {:?}",
+            output.errors
+        );
     }
 }

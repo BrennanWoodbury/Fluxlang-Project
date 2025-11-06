@@ -157,6 +157,7 @@ impl<'a> Lexer<'a> {
             "pub" => TokenKind::KwPub,
             "use" => TokenKind::KwUse,
             "as" => TokenKind::KwAs,
+            "for" => TokenKind::KwFor,
             "return" => TokenKind::KwReturn,
             "throw" => TokenKind::KwThrow,
             "panic" => TokenKind::KwPanic,
