@@ -419,6 +419,9 @@ impl Parser {
             TokenKind::KwThrow => self.parse_throw_stmt(),
             TokenKind::KwPanic => self.parse_panic_stmt(),
             TokenKind::KwFor => self.parse_for_stmt(),
+            TokenKind::KwWhile => self.parse_while_stmt(),
+            TokenKind::KwBreak => self.parse_break_stmt(),
+            TokenKind::KwContinue => self.parse_continue_stmt(),
             TokenKind::KwLoop => self.parse_loop_stmt(),
             TokenKind::LBrace => self.parse_block().map(Stmt::Block),
             _ => self.parse_expr_stmt(),
@@ -516,6 +519,25 @@ impl Parser {
         };
         self.expect_token(TokenKind::Semicolon, "`;` after panic statement");
         Some(Stmt::Panic(value))
+    }
+
+    fn parse_while_stmt(&mut self) -> Option<Stmt> {
+        self.bump();
+        let cond = self.parse_expression()?;
+        let body = self.parse_block()?;
+        Some(Stmt::While { cond, body })
+    }
+
+    fn parse_break_stmt(&mut self) -> Option<Stmt> {
+        self.bump();
+        self.expect_token(TokenKind::Semicolon, "`;` after break statement");
+        Some(Stmt::Break)
+    }
+
+    fn parse_continue_stmt(&mut self) -> Option<Stmt> {
+        self.bump();
+        self.expect_token(TokenKind::Semicolon, "`;` after continue statement");
+        Some(Stmt::Continue)
     }
 
     fn parse_for_stmt(&mut self) -> Option<Stmt> {
@@ -930,6 +952,11 @@ impl Parser {
     fn infix_binding_power(&self) -> Option<(u8, u8, BinaryOp)> {
         match self.current_kind() {
             TokenKind::Assign => Some((PREC_ASSIGN, PREC_ASSIGN - 1, BinaryOp::Assign)),
+            TokenKind::PlusEq => Some((PREC_ASSIGN, PREC_ASSIGN - 1, BinaryOp::AddAssign)),
+            TokenKind::MinusEq => Some((PREC_ASSIGN, PREC_ASSIGN - 1, BinaryOp::SubAssign)),
+            TokenKind::StarEq => Some((PREC_ASSIGN, PREC_ASSIGN - 1, BinaryOp::MulAssign)),
+            TokenKind::SlashEq => Some((PREC_ASSIGN, PREC_ASSIGN - 1, BinaryOp::DivAssign)),
+            TokenKind::PercentEq => Some((PREC_ASSIGN, PREC_ASSIGN - 1, BinaryOp::ModAssign)),
             TokenKind::Plus => Some((PREC_SUM, PREC_SUM + 1, BinaryOp::Add)),
             TokenKind::Minus => Some((PREC_SUM, PREC_SUM + 1, BinaryOp::Sub)),
             TokenKind::Star => Some((PREC_PRODUCT, PREC_PRODUCT + 1, BinaryOp::Mul)),
@@ -1132,7 +1159,28 @@ mod tests {
 
     #[test]
     fn parse_for_loop() {
-        let output = parse_ok("fn main() { for (let i = 0; i < 3; i = i + 1) { return; } }");
+        let output = parse_ok("fn main() { for (let i = 0; i < 3; i += 1) { return; } }");
+        assert!(
+            output.errors.is_empty(),
+            "parse errors: {:?}",
+            output.errors
+        );
+    }
+
+    #[test]
+    fn parse_while_break_continue() {
+        let output =
+            parse_ok("fn main() { var x: int = 0; while x < 10 { x += 1; continue; break; } }");
+        assert!(
+            output.errors.is_empty(),
+            "parse errors: {:?}",
+            output.errors
+        );
+    }
+
+    #[test]
+    fn parse_compound_assignment_expression() {
+        let output = parse_ok("fn demo() { var x: int = 1; x *= 3; x -= 2; }");
         assert!(
             output.errors.is_empty(),
             "parse errors: {:?}",

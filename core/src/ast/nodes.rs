@@ -152,6 +152,9 @@ pub enum Stmt {
     Block(Block),
     For(Box<ForStmt>),
     Loop(Block),
+    While { cond: Expr, body: Block },
+    Break,
+    Continue,
 }
 
 #[derive(Debug, Clone, PartialEq)]

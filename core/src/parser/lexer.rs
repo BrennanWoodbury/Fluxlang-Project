@@ -158,6 +158,9 @@ impl<'a> Lexer<'a> {
             "use" => TokenKind::KwUse,
             "as" => TokenKind::KwAs,
             "for" => TokenKind::KwFor,
+            "while" => TokenKind::KwWhile,
+            "break" => TokenKind::KwBreak,
+            "continue" => TokenKind::KwContinue,
             "return" => TokenKind::KwReturn,
             "throw" => TokenKind::KwThrow,
             "panic" => TokenKind::KwPanic,
@@ -391,17 +394,48 @@ impl<'a> Lexer<'a> {
                 }
             }
             '-' => {
-                if self.peek_char() == Some('>') {
+                if self.peek_char() == Some('=') {
+                    self.bump_char();
+                    TokenKind::MinusEq
+                } else if self.peek_char() == Some('>') {
                     self.bump_char();
                     TokenKind::Arrow
                 } else {
                     TokenKind::Minus
                 }
             }
-            '+' => TokenKind::Plus,
-            '*' => TokenKind::Star,
-            '/' => TokenKind::Slash,
-            '%' => TokenKind::Percent,
+            '+' => {
+                if self.peek_char() == Some('=') {
+                    self.bump_char();
+                    TokenKind::PlusEq
+                } else {
+                    TokenKind::Plus
+                }
+            }
+            '*' => {
+                if self.peek_char() == Some('=') {
+                    self.bump_char();
+                    TokenKind::StarEq
+                } else {
+                    TokenKind::Star
+                }
+            }
+            '/' => {
+                if self.peek_char() == Some('=') {
+                    self.bump_char();
+                    TokenKind::SlashEq
+                } else {
+                    TokenKind::Slash
+                }
+            }
+            '%' => {
+                if self.peek_char() == Some('=') {
+                    self.bump_char();
+                    TokenKind::PercentEq
+                } else {
+                    TokenKind::Percent
+                }
+            }
             '!' => {
                 if self.peek_char() == Some('=') {
                     self.bump_char();
