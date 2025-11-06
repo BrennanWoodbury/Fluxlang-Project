@@ -153,6 +153,7 @@ pub enum Stmt {
     For(Box<ForStmt>),
     Loop(Block),
     While { cond: Expr, body: Block },
+    If(Box<IfStmt>),
     Break,
     Continue,
 }
@@ -171,6 +172,13 @@ pub struct ForStmt {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct IfStmt {
+    pub cond: Expr,
+    pub then_branch: Block,
+    pub else_branch: Option<Box<Stmt>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Ident(Ident),
     IntLit {
@@ -181,6 +189,7 @@ pub enum Expr {
         value: f64,
         ty: Option<u32>,
     },
+    Tuple(Vec<Expr>),
     StringLit {
         value: String,
         size: Option<u32>,
@@ -202,6 +211,11 @@ pub enum Expr {
         object: Box<Expr>,
         args: Vec<Expr>,
     },
+    Range {
+        start: Box<Expr>,
+        end: Box<Expr>,
+        inclusive_end: bool,
+    },
     New {
         ty: TypeExpr,
         fields: Vec<(Ident, Expr)>,
@@ -213,6 +227,24 @@ pub enum TypeExpr {
     Named(Ident),
     BuiltIn(TypeIdentKind),
     Generic { base: Ident, args: Vec<TypeExpr> },
+    Pointer(Box<TypeExpr>),
+    Tuple(Vec<TypeExpr>),
+    Array(ArrayType),
+    Map(MapType),
+    Inferred,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArrayType {
+    pub element: Option<Box<TypeExpr>>,
+    pub length: Option<u32>,
+    pub dynamic: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapType {
+    pub key: Option<Box<TypeExpr>>,
+    pub value: Option<Box<TypeExpr>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

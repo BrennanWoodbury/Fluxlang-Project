@@ -26,6 +26,8 @@ pub enum TokenKind {
     KwThrow,
     KwPanic,
     KwLoop,
+    KwIf,
+    KwElse,
     KwFn,
     KwConst,
     KwLet,
@@ -50,6 +52,7 @@ pub enum TokenKind {
     // operators
     Assign,
     Plus,
+    Ampersand,
     PlusEq,
     Minus,
     MinusEq,

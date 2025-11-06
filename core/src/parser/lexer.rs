@@ -165,6 +165,8 @@ impl<'a> Lexer<'a> {
             "throw" => TokenKind::KwThrow,
             "panic" => TokenKind::KwPanic,
             "loop" => TokenKind::KwLoop,
+            "if" => TokenKind::KwIf,
+            "else" => TokenKind::KwElse,
             "fn" => TokenKind::KwFn,
             "const" => TokenKind::KwConst,
             "let" => TokenKind::KwLet,
@@ -436,6 +438,7 @@ impl<'a> Lexer<'a> {
                     TokenKind::Percent
                 }
             }
+            '&' => TokenKind::Ampersand,
             '!' => {
                 if self.peek_char() == Some('=') {
                     self.bump_char();

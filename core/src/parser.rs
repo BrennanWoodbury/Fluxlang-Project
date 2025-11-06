@@ -11,8 +11,9 @@
 pub mod lexer;
 
 use crate::ast::nodes::{
-    Block, ConstDecl, Expr, FieldDecl, FnDecl, FnSig, ForStmt, GenericParams, Ident, ImplBlock,
-    InterfaceDecl, Item, LetDecl, ObjDecl, Param, Stmt, TypeExpr, UseDecl, VarDecl, Visibility,
+    ArrayType, Block, ConstDecl, Expr, FieldDecl, FnDecl, FnSig, ForStmt, GenericParams, Ident,
+    IfStmt, ImplBlock, InterfaceDecl, Item, LetDecl, MapType, ObjDecl, Param, Stmt, TypeExpr,
+    UseDecl, VarDecl, Visibility,
 };
 use crate::ast::{BinaryOp, TokenKind, TypeIdentKind, UnaryOp};
 use crate::diag::Span;
@@ -420,6 +421,7 @@ impl Parser {
             TokenKind::KwPanic => self.parse_panic_stmt(),
             TokenKind::KwFor => self.parse_for_stmt(),
             TokenKind::KwWhile => self.parse_while_stmt(),
+            TokenKind::KwIf => self.parse_if_stmt(),
             TokenKind::KwBreak => self.parse_break_stmt(),
             TokenKind::KwContinue => self.parse_continue_stmt(),
             TokenKind::KwLoop => self.parse_loop_stmt(),
@@ -585,6 +587,31 @@ impl Parser {
         Some(Stmt::Loop(body))
     }
 
+    fn parse_if_stmt(&mut self) -> Option<Stmt> {
+        self.bump();
+        self.expect_token(TokenKind::LParen, "`(` after `if`")?;
+        let cond = self.parse_expression()?;
+        self.expect_token(TokenKind::RParen, "`)` after `if` condition");
+        let then_branch = self.parse_block()?;
+
+        let else_branch = if matches!(self.current_kind(), TokenKind::KwElse) {
+            self.bump();
+            if matches!(self.current_kind(), TokenKind::KwIf) {
+                Some(Box::new(self.parse_if_stmt()?))
+            } else {
+                Some(Box::new(Stmt::Block(self.parse_block()?)))
+            }
+        } else {
+            None
+        };
+
+        Some(Stmt::If(Box::new(IfStmt {
+            cond,
+            then_branch,
+            else_branch,
+        })))
+    }
+
     fn parse_expr_stmt(&mut self) -> Option<Stmt> {
         let expr = self.parse_expression()?;
         self.expect_token(TokenKind::Semicolon, "`;` after expression statement");
@@ -615,9 +642,31 @@ impl Parser {
             }
             TokenKind::LParen => {
                 self.bump();
-                let expr = self.parse_expression()?;
-                self.expect_token(TokenKind::RParen, "`)` to close grouping");
-                expr
+                if matches!(self.current_kind(), TokenKind::RParen) {
+                    self.bump();
+                    Expr::Tuple(Vec::new())
+                } else {
+                    let first = self.parse_expression()?;
+                    if matches!(self.current_kind(), TokenKind::Comma) {
+                        let mut items = vec![first];
+                        loop {
+                            if !matches!(self.current_kind(), TokenKind::Comma) {
+                                break;
+                            }
+                            self.bump();
+                            if matches!(self.current_kind(), TokenKind::RParen) {
+                                break;
+                            }
+                            let expr = self.parse_expression()?;
+                            items.push(expr);
+                        }
+                        self.expect_token(TokenKind::RParen, "`)` to close tuple");
+                        Expr::Tuple(items)
+                    } else {
+                        self.expect_token(TokenKind::RParen, "`)` to close grouping");
+                        first
+                    }
+                }
             }
             _ => self.parse_postfix_primary()?,
         };
@@ -663,6 +712,7 @@ impl Parser {
             TokenKind::IntLit { .. } => self.parse_int_literal()?,
             TokenKind::FloatLit { .. } => self.parse_float_literal()?,
             TokenKind::StringLit { .. } => self.parse_string_literal()?,
+            TokenKind::LBracket => self.parse_range_literal()?,
             _ => {
                 self.push_error(
                     ParseError::new("expected expression", self.current_span())
@@ -710,6 +760,40 @@ impl Parser {
         }
         self.expect_token(TokenKind::RParen, "`)` to close call");
         Some(args)
+    }
+
+    fn parse_range_literal(&mut self) -> Option<Expr> {
+        self.expect_token(TokenKind::LBracket, "`[` to start range literal")?;
+        let start = self.parse_expression()?;
+        self.expect_token(TokenKind::Comma, "`,` between range bounds")?;
+        let end = self.parse_expression()?;
+
+        let inclusive_end = match self.current_kind() {
+            TokenKind::RBracket => {
+                self.bump();
+                true
+            }
+            TokenKind::RParen => {
+                self.bump();
+                false
+            }
+            _ => {
+                self.push_error(
+                    ParseError::new(
+                        "expected `]` or `)` after range bounds",
+                        self.current_span(),
+                    )
+                    .with_expected("`]` or `)`"),
+                );
+                return None;
+            }
+        };
+
+        Some(Expr::Range {
+            start: Box::new(start),
+            end: Box::new(end),
+            inclusive_end,
+        })
     }
 
     fn parse_int_literal(&mut self) -> Option<Expr> {
@@ -834,7 +918,109 @@ impl Parser {
     }
 
     fn parse_type_expr(&mut self) -> Option<TypeExpr> {
+        let mut ty = self.parse_type_atom()?;
+        ty = self.normalize_type_expr(ty);
+
+        loop {
+            let mut consumed_suffix = false;
+
+            if matches!(self.current_kind(), TokenKind::LParen) {
+                if let TypeExpr::Array(mut array) = ty {
+                    self.bump();
+                    if matches!(self.current_kind(), TokenKind::RParen) {
+                        self.bump();
+                        array.dynamic = true;
+                        array.length = None;
+                    } else {
+                        let length_token = self.bump();
+                        let length = match &length_token.kind {
+                            TokenKind::IntLit { value, .. } => match value.parse::<u32>() {
+                                Ok(value) => Some(value),
+                                Err(_) => {
+                                    self.push_error(
+                                        ParseError::new(
+                                            "array length must be a positive integer",
+                                            length_token.span,
+                                        )
+                                        .with_found(length_token.kind.clone()),
+                                    );
+                                    None
+                                }
+                            },
+                            _ => {
+                                self.push_error(
+                                    ParseError::new(
+                                        "array length must be a positive integer",
+                                        length_token.span,
+                                    )
+                                    .with_found(length_token.kind.clone()),
+                                );
+                                None
+                            }
+                        };
+                        self.expect_token(TokenKind::RParen, "`)` to close array length")?;
+                        array.dynamic = length.is_none();
+                        array.length = length;
+                    }
+                    ty = TypeExpr::Array(array);
+                    consumed_suffix = true;
+                }
+            }
+
+            if !consumed_suffix {
+                break;
+            }
+        }
+
+        Some(ty)
+    }
+
+    fn parse_type_atom(&mut self) -> Option<TypeExpr> {
         match self.current_kind() {
+            TokenKind::Ampersand => {
+                self.bump();
+                let inner = self.parse_type_expr()?;
+                Some(TypeExpr::Pointer(Box::new(inner)))
+            }
+            TokenKind::LParen => {
+                self.bump();
+                if matches!(self.current_kind(), TokenKind::RParen) {
+                    self.bump();
+                    Some(TypeExpr::Tuple(Vec::new()))
+                } else {
+                    let first = self.parse_type_expr()?;
+                    if matches!(self.current_kind(), TokenKind::Comma) {
+                        let mut items = vec![first];
+                        while matches!(self.current_kind(), TokenKind::Comma) {
+                            self.bump();
+                            let ty = self.parse_type_expr()?;
+                            items.push(ty);
+                        }
+                        self.expect_token(TokenKind::RParen, "`)` to close tuple type")?;
+                        Some(TypeExpr::Tuple(items))
+                    } else {
+                        self.expect_token(TokenKind::RParen, "`)` to close grouped type")?;
+                        Some(first)
+                    }
+                }
+            }
+            TokenKind::LBracket => {
+                self.bump();
+                self.expect_token(TokenKind::RBracket, "`]` to close array type")?;
+                Some(TypeExpr::Array(ArrayType {
+                    element: None,
+                    length: None,
+                    dynamic: true,
+                }))
+            }
+            TokenKind::LBrace => {
+                self.bump();
+                self.expect_token(TokenKind::RBrace, "`}` to close map type")?;
+                Some(TypeExpr::Map(MapType {
+                    key: None,
+                    value: None,
+                }))
+            }
             TokenKind::Ident(_) => {
                 let token = self.bump();
                 if let TokenKind::Ident(name) = token.kind.clone() {
@@ -864,6 +1050,32 @@ impl Parser {
                 );
                 None
             }
+        }
+    }
+
+    fn normalize_type_expr(&mut self, ty: TypeExpr) -> TypeExpr {
+        match ty {
+            TypeExpr::Generic { base, args } => {
+                let lowered = base.name.to_ascii_lowercase();
+                match lowered.as_str() {
+                    "tuple" => TypeExpr::Tuple(args),
+                    "array" => {
+                        let element = args.get(0).cloned().map(Box::new);
+                        TypeExpr::Array(ArrayType {
+                            element,
+                            length: None,
+                            dynamic: true,
+                        })
+                    }
+                    "map" => {
+                        let key = args.get(0).cloned().map(Box::new);
+                        let value = args.get(1).cloned().map(Box::new);
+                        TypeExpr::Map(MapType { key, value })
+                    }
+                    _ => TypeExpr::Generic { base, args },
+                }
+            }
+            other => other,
         }
     }
 
@@ -1028,7 +1240,13 @@ impl Parser {
                 | TokenKind::KwReturn
                 | TokenKind::KwThrow
                 | TokenKind::KwPanic
-                | TokenKind::KwLoop => break,
+                | TokenKind::KwLoop
+                | TokenKind::KwIf
+                | TokenKind::KwElse
+                | TokenKind::KwFor
+                | TokenKind::KwWhile
+                | TokenKind::KwBreak
+                | TokenKind::KwContinue => break,
                 _ => {
                     self.bump();
                 }
@@ -1181,6 +1399,29 @@ mod tests {
     #[test]
     fn parse_compound_assignment_expression() {
         let output = parse_ok("fn demo() { var x: int = 1; x *= 3; x -= 2; }");
+        assert!(
+            output.errors.is_empty(),
+            "parse errors: {:?}",
+            output.errors
+        );
+    }
+
+    #[test]
+    fn parse_if_else_chain() {
+        let source =
+            "fn main() { if (ready) { return; } else if (fallback) { return; } else { panic; } }";
+        let output = parse_ok(source);
+        assert!(
+            output.errors.is_empty(),
+            "parse errors: {:?}",
+            output.errors
+        );
+    }
+
+    #[test]
+    fn parse_tuple_and_range_literals() {
+        let source = "fn demo() { let t = (1, 2, 3); let single = (value,); let unit = (); let span = [0, 10); let inclusive = [0, 10]; }";
+        let output = parse_ok(source);
         assert!(
             output.errors.is_empty(),
             "parse errors: {:?}",
