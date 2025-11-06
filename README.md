@@ -16,7 +16,7 @@ FluxLang seeks to combine the developer experience of high-level scripting with 
 
 | Design Area | FluxLang Goal |
 |--------------|---------------|
-| Typing | Optional static typing — `var` for dynamic, `let` for static |
+| Typing | Optional static typing — `let` for dynamic, `var` for static |
 | Execution | JIT for iteration, AOT compilation for release |
 | Safety | Memory and ownership model inspired by Rust |
 | Runtime | Compact, embeddable VM with optional native compilation |
@@ -60,11 +60,11 @@ Each layer builds on the previous — `vm` depends on `core`, `compiler` targets
 
 ```flux
 # dynamic typing
-var name = "FluxLang"
+let name = "FluxLang"
 print("Hello, " + name)
 
 # static typing
-let counter: int = 0
+var counter: int = 0
 while counter < 10 {
     print(counter)
     counter += 1
