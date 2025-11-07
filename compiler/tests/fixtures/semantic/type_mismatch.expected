@@ -1,0 +1,2 @@
+semantic(TypeMismatch) 21..26 cannot assign `float` to `int`
+semantic(TypeMismatch) 21..26 cannot assign `float` to `int`
