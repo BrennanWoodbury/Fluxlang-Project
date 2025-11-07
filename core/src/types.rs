@@ -37,6 +37,10 @@ impl TypeId {
         Self::new("range")
     }
 
+    pub fn unit() -> Self {
+        Self::new("unit")
+    }
+
     pub fn array_of(element: &TypeId) -> Self {
         Self::new(format!("Array<{}>", element.name))
     }

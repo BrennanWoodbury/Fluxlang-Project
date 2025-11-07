@@ -7,7 +7,7 @@ use std::fmt::{self, Write};
 
 use super::arena::ArenaIndex;
 use super::ids::{HirBlockId, HirExprId, HirItemId, HirStmtId, TraitImplId, TypeCtxId};
-use super::nodes::{HirExprKind, HirItemKind, HirModule, HirStmtKind};
+use super::nodes::{HirExprKind, HirItemKind, HirLiteral, HirModule, HirStmtKind};
 use super::types::TypeInfo;
 
 /// Format a module into a human-readable string.
@@ -15,6 +15,126 @@ pub fn format_module(module: &HirModule) -> String {
     let mut formatter = HirFormatter::new();
     formatter.write_module(module).expect("string writer");
     formatter.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::semantics::lowering::LoweringContext;
+    use core::ast::nodes::{
+        Block, FnDecl, GenericParams, Ident, IfStmt, ImplBlock, Item, Param, Stmt, TypeExpr,
+    };
+    use core::ast::{BinaryOp, Expr, TypeIdentKind};
+
+    fn ident(name: &str) -> Ident {
+        Ident {
+            name: name.to_string(),
+            span: None,
+        }
+    }
+
+    fn lower_and_format(items: &[Item]) -> String {
+        let lowering = LoweringContext::lower(items, None);
+        assert!(lowering.diagnostics.is_empty());
+        format_module(&lowering.module)
+    }
+
+    #[test]
+    fn formats_simple_function_module() {
+        let fn_decl = FnDecl {
+            vis: core::ast::nodes::Visibility::Public,
+            name: ident("main"),
+            generics: GenericParams { params: Vec::new() },
+            params: Vec::new(),
+            ret_type: Some(TypeExpr::BuiltIn(TypeIdentKind::Int)),
+            body: Block {
+                stmts: vec![Stmt::Return(Some(Expr::IntLit { value: 1, ty: None }))],
+            },
+        };
+
+        let rendered = lower_and_format(&[Item::Fn(fn_decl)]);
+        let expected = "HIRModule {\n  items: 1, trait_impls: 0\n    fn main() -> int\n      block -> int {\n        return 1 : int;\n      }\n}\n";
+
+        assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn formats_control_flow_statements() {
+        let fn_decl = FnDecl {
+            vis: core::ast::nodes::Visibility::Public,
+            name: ident("control"),
+            generics: GenericParams { params: Vec::new() },
+            params: Vec::new(),
+            ret_type: None,
+            body: Block {
+                stmts: vec![
+                    Stmt::If(Box::new(IfStmt {
+                        cond: Expr::Binary {
+                            op: BinaryOp::Eq,
+                            left: Box::new(Expr::IntLit { value: 1, ty: None }),
+                            right: Box::new(Expr::IntLit { value: 2, ty: None }),
+                        },
+                        then_branch: Block {
+                            stmts: vec![Stmt::Expr(Expr::IntLit { value: 0, ty: None })],
+                        },
+                        else_branch: Some(Box::new(Stmt::Expr(Expr::IntLit {
+                            value: 3,
+                            ty: None,
+                        }))),
+                    })),
+                    Stmt::While {
+                        cond: Expr::Binary {
+                            op: BinaryOp::Eq,
+                            left: Box::new(Expr::IntLit { value: 1, ty: None }),
+                            right: Box::new(Expr::IntLit { value: 1, ty: None }),
+                        },
+                        body: Block {
+                            stmts: vec![Stmt::Break],
+                        },
+                    },
+                    Stmt::Loop(Block {
+                        stmts: vec![Stmt::Break],
+                    }),
+                ],
+            },
+        };
+
+        let rendered = lower_and_format(&[Item::Fn(fn_decl)]);
+        let expected = "HIRModule {\n  items: 1, trait_impls: 0\n    fn control() -> unit\n      block -> unit {\n        if (1 Eq 2) : unit\n          block -> int {\n            0;\n          }\n        else\n          block -> int {\n            3;\n          }\n        while (1 Eq 1) : unit\n          block -> unit {\n            break : unit;\n          }\n        loop : unit\n          block -> unit {\n            break : unit;\n          }\n      }\n}\n";
+
+        assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn formats_trait_impl_with_method() {
+        let method = FnDecl {
+            vis: core::ast::nodes::Visibility::Public,
+            name: ident("next"),
+            generics: GenericParams { params: Vec::new() },
+            params: vec![Param {
+                name: ident("self"),
+                ty: Some(TypeExpr::BuiltIn(TypeIdentKind::Int)),
+            }],
+            ret_type: Some(TypeExpr::BuiltIn(TypeIdentKind::Int)),
+            body: Block {
+                stmts: vec![Stmt::Return(Some(Expr::IntLit { value: 1, ty: None }))],
+            },
+        };
+
+        let impl_block = ImplBlock::new(
+            core::ast::nodes::Visibility::Public,
+            GenericParams { params: Vec::new() },
+            TypeExpr::Named(ident("Vector")),
+            Some(TypeExpr::Named(ident("Iterable"))),
+            vec![method],
+            None,
+        );
+
+        let rendered = lower_and_format(&[Item::Impl(impl_block)]);
+    let expected = "HIRModule {\n  items: 1, trait_impls: 1\n    trait_impl #0\n      impl Vector for Iterable\n        fn next(self: int) -> int\n          block -> int {\n            return 1 : int;\n          }\n  trait_impl_table {\n        Vector for Iterable -> 1 methods\n  }\n}\n";
+
+        assert_eq!(rendered, expected);
+    }
 }
 
 /// Stateful formatter used to render HIR nodes.
@@ -274,6 +394,38 @@ impl HirFormatter {
             HirStmtKind::Block(block_id) => {
                 self.write_block(module, *block_id, indent + 1)?;
             }
+            HirStmtKind::If {
+                cond,
+                then_block,
+                else_block,
+            } => {
+                self.indent_line(
+                    indent,
+                    &format!("if {}{}", self.format_expr(module, *cond), ty_suffix),
+                )?;
+                self.write_block(module, *then_block, indent + 1)?;
+                if let Some(else_block) = else_block {
+                    self.indent_line(indent, "else")?;
+                    self.write_block(module, *else_block, indent + 1)?;
+                }
+            }
+            HirStmtKind::While { cond, body } => {
+                self.indent_line(
+                    indent,
+                    &format!("while {}{}", self.format_expr(module, *cond), ty_suffix),
+                )?;
+                self.write_block(module, *body, indent + 1)?;
+            }
+            HirStmtKind::Loop { body } => {
+                self.indent_line(indent, &format!("loop{}", ty_suffix))?;
+                self.write_block(module, *body, indent + 1)?;
+            }
+            HirStmtKind::Break => {
+                self.indent_line(indent, &format!("break{};", ty_suffix))?;
+            }
+            HirStmtKind::Continue => {
+                self.indent_line(indent, &format!("continue{};", ty_suffix))?;
+            }
             HirStmtKind::Unsupported { reason } => {
                 self.indent_line(indent, &format!("<unsupported stmt {}>", reason))?;
             }
@@ -287,14 +439,8 @@ impl HirFormatter {
             return format!("<missing expr {:?}>", id);
         };
 
-        match &expr.kind {
-            HirExprKind::Literal(lit) => match lit {
-                super::nodes::HirLiteral::Int(value) => value.to_string(),
-                super::nodes::HirLiteral::Float(value) => value.to_string(),
-                super::nodes::HirLiteral::String(value) => format!("\"{}\"", value),
-                super::nodes::HirLiteral::Bool(value) => value.to_string(),
-                super::nodes::HirLiteral::Unit => "unit".to_string(),
-            },
+        let mut rendered = match &expr.kind {
+            HirExprKind::Literal(lit) => self.literal_to_string(lit),
             HirExprKind::Identifier { name, .. } => name.clone(),
             HirExprKind::Unary { op, operand } => {
                 format!("({:?} {})", op, self.format_expr(module, *operand))
@@ -345,7 +491,15 @@ impl HirFormatter {
             }
             HirExprKind::Block(block) => format!("block#{}", block.to_raw()),
             HirExprKind::Unsupported { reason } => format!("<unsupported expr {}>", reason),
+        };
+
+        if let Some(value) = &expr.const_value {
+            if !matches!(expr.kind, HirExprKind::Literal(_)) {
+                rendered = format!("{}/*={}*/", rendered, self.literal_to_string(value));
+            }
         }
+
+        rendered
     }
 
     fn type_label(&self, module: &HirModule, ty: TypeCtxId) -> String {
@@ -361,5 +515,15 @@ impl HirFormatter {
             write!(self.buffer, "  ")?;
         }
         writeln!(self.buffer, "{}", line)
+    }
+
+    fn literal_to_string(&self, lit: &HirLiteral) -> String {
+        match lit {
+            HirLiteral::Int(value) => value.to_string(),
+            HirLiteral::Float(value) => value.to_string(),
+            HirLiteral::String(value) => format!("\"{}\"", value),
+            HirLiteral::Bool(value) => value.to_string(),
+            HirLiteral::Unit => "unit".to_string(),
+        }
     }
 }

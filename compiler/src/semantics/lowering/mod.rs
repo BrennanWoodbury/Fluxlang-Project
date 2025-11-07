@@ -278,6 +278,23 @@ impl LoweringContext {
                 value: self.lower_expr(value),
             },
             Stmt::Block(block) => HirStmtKind::Block(self.lower_block(block)),
+            Stmt::If(if_stmt) => HirStmtKind::If {
+                cond: self.lower_expr(&if_stmt.cond),
+                then_block: self.lower_block(&if_stmt.then_branch),
+                else_block: if_stmt
+                    .else_branch
+                    .as_deref()
+                    .and_then(|stmt| self.lower_else_block(stmt)),
+            },
+            Stmt::While { cond, body } => HirStmtKind::While {
+                cond: self.lower_expr(cond),
+                body: self.lower_block(body),
+            },
+            Stmt::Loop(block) => HirStmtKind::Loop {
+                body: self.lower_block(block),
+            },
+            Stmt::Break => HirStmtKind::Break,
+            Stmt::Continue => HirStmtKind::Continue,
             other => HirStmtKind::Unsupported {
                 reason: format!("unsupported statement: {:?}", other),
             },
@@ -288,6 +305,23 @@ impl LoweringContext {
             ty: stmt_ty,
             span: statement_span(stmt),
         }))
+    }
+
+    fn lower_else_block(&mut self, stmt: &Stmt) -> Option<HirBlockId> {
+        match stmt {
+            Stmt::Block(block) => Some(self.lower_block(block)),
+            other => {
+                let stmt_ty = self.typeck.infer_statement(other);
+                let Some(stmt_id) = self.lower_statement(other) else {
+                    return None;
+                };
+                Some(self.alloc_block(HirBlock {
+                    stmts: vec![stmt_id],
+                    ty: stmt_ty.unwrap_or(self.typeck.primitives.unit),
+                    span: statement_span(other),
+                }))
+            }
+        }
     }
 
     fn lower_expr(&mut self, expr: &Expr) -> HirExprId {
@@ -337,7 +371,17 @@ impl LoweringContext {
             },
         };
 
-        self.alloc_expr(HirExpr { ty, span, kind })
+        let const_value = match &kind {
+            HirExprKind::Literal(lit) => Some(lit.clone()),
+            _ => None,
+        };
+
+        self.alloc_expr(HirExpr {
+            ty,
+            span,
+            kind,
+            const_value,
+        })
     }
 
     fn alloc_item(&mut self, item: HirItem) -> HirItemId {
@@ -386,6 +430,8 @@ fn statement_span(stmt: &Stmt) -> Option<Span> {
         Stmt::Let(decl) => decl.span.clone(),
         Stmt::Const(decl) => decl.span.clone(),
         Stmt::Var(decl) => decl.span.clone(),
+        Stmt::Return(expr) => expr.as_ref().and_then(|value| expression_span(value)),
+        Stmt::Expr(expr) => expression_span(expr),
         _ => None,
     }
 }
@@ -472,9 +518,9 @@ fn type_ident_to_string(kind: TypeIdentKind) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantics::hir::{ArenaIndex, HirItemKind, HirStmtKind};
+    use crate::semantics::hir::{ArenaIndex, HirExprKind, HirItemKind, HirStmtKind};
     use core::ast::nodes::{
-        Block, FnDecl, GenericParams, Ident, ImplBlock, Item, Param, Stmt, TypeExpr,
+        Block, FnDecl, GenericParams, Ident, IfStmt, ImplBlock, Item, Param, Stmt, TypeExpr,
     };
     use core::ast::{BinaryOp, Expr, TypeIdentKind};
     use core::diag::Span;
@@ -592,5 +638,85 @@ mod tests {
             }
             other => panic!("expected trait impl, found {other:?}"),
         }
+    }
+
+    #[test]
+    fn lowers_if_statement_with_else_branch() {
+        let fn_decl = FnDecl {
+            vis: core::ast::nodes::Visibility::Public,
+            name: ident("check"),
+            generics: GenericParams { params: Vec::new() },
+            params: Vec::new(),
+            ret_type: None,
+            body: Block {
+                stmts: vec![Stmt::If(Box::new(IfStmt {
+                    cond: Expr::Binary {
+                        op: BinaryOp::Eq,
+                        left: Box::new(Expr::IntLit { value: 1, ty: None }),
+                        right: Box::new(Expr::IntLit { value: 2, ty: None }),
+                    },
+                    then_branch: Block {
+                        stmts: vec![Stmt::Expr(Expr::IntLit { value: 0, ty: None })],
+                    },
+                    else_branch: Some(Box::new(Stmt::Expr(Expr::IntLit { value: 1, ty: None }))),
+                }))],
+            },
+        };
+
+        let LoweringResult { module, .. } = LoweringContext::lower(&[Item::Fn(fn_decl)], None);
+
+        let func_id = module.roots[0];
+        let func = module
+            .items
+            .get(ArenaIndex::from_raw(func_id.to_raw() as usize))
+            .expect("function present");
+
+        let HirItemKind::Function(func_data) = &func.kind else {
+            panic!("expected function item");
+        };
+
+        let body = module
+            .blocks
+            .get(ArenaIndex::from_raw(func_data.body.to_raw() as usize))
+            .expect("function body");
+        assert_eq!(body.stmts.len(), 1);
+
+        let stmt = module
+            .stmts
+            .get(ArenaIndex::from_raw(body.stmts[0].to_raw() as usize))
+            .expect("if stmt present");
+
+        let HirStmtKind::If {
+            cond,
+            then_block,
+            else_block,
+        } = &stmt.kind
+        else {
+            panic!("expected if statement");
+        };
+
+        let cond_expr = module
+            .exprs
+            .get(ArenaIndex::from_raw(cond.to_raw() as usize))
+            .expect("condition expr");
+        assert!(matches!(cond_expr.kind, HirExprKind::Binary { .. }));
+
+        let then_block = module
+            .blocks
+            .get(ArenaIndex::from_raw(then_block.to_raw() as usize))
+            .expect("then block");
+        assert_eq!(then_block.stmts.len(), 1);
+
+        let else_block_id = else_block.expect("else block lowered");
+        let else_block = module
+            .blocks
+            .get(ArenaIndex::from_raw(else_block_id.to_raw() as usize))
+            .expect("else block");
+        assert_eq!(else_block.stmts.len(), 1);
+        let else_stmt = module
+            .stmts
+            .get(ArenaIndex::from_raw(else_block.stmts[0].to_raw() as usize))
+            .expect("else stmt");
+        assert!(matches!(else_stmt.kind, HirStmtKind::Expr(_)));
     }
 }

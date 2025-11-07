@@ -84,6 +84,28 @@ impl TypeChecker {
                     None
                 }
             }
+            Stmt::If(if_stmt) => {
+                if let Some(cond_ty) = self.check_expr(&if_stmt.cond) {
+                    self.ensure_boolean(cond_ty, None);
+                }
+                let _ = self.check_block(&if_stmt.then_branch);
+                if let Some(else_branch) = &if_stmt.else_branch {
+                    let _ = self.check_statement(else_branch);
+                }
+                Some(self.primitives.unit)
+            }
+            Stmt::Loop(block) => {
+                let _ = self.check_block(block);
+                Some(self.primitives.unit)
+            }
+            Stmt::While { cond, body } => {
+                if let Some(cond_ty) = self.check_expr(cond) {
+                    self.ensure_boolean(cond_ty, None);
+                }
+                let _ = self.check_block(body);
+                Some(self.primitives.unit)
+            }
+            Stmt::Break | Stmt::Continue => Some(self.primitives.unit),
             Stmt::Return(expr) => expr
                 .as_ref()
                 .and_then(|value| self.check_expr(value))
@@ -274,6 +296,12 @@ impl TypeChecker {
         }
     }
 
+    fn ensure_boolean(&mut self, ty: TypeCtxId, span: Option<Span>) {
+        if ty != self.primitives.bool && ty != self.primitives.any {
+            self.emit_expected_boolean(span);
+        }
+    }
+
     fn type_from_annotation(&mut self, ty: &TypeExpr) -> Option<TypeCtxId> {
         match ty {
             TypeExpr::BuiltIn(kind) => Some(match kind {
@@ -313,13 +341,21 @@ impl TypeChecker {
             SemanticErrorCode::UnknownType,
         ));
     }
+
+    fn emit_expected_boolean(&mut self, span: Option<Span>) {
+        self.diagnostics.push(SemanticDiagnostic::new(
+            "condition must evaluate to a boolean",
+            span.unwrap_or(EMPTY_SPAN),
+            SemanticErrorCode::ExpectedBoolean,
+        ));
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use core::ast::nodes::TypeExpr;
-    use core::ast::nodes::{Expr, Ident, LetDecl, Stmt, VarDecl};
+    use core::ast::nodes::{Block, Expr, Ident, IfStmt, LetDecl, Stmt, VarDecl};
     use core::ast::{BinaryOp, TypeIdentKind};
 
     fn empty_span() -> Option<Span> {
@@ -382,6 +418,47 @@ mod tests {
         assert_eq!(
             checker.diagnostics()[0].code,
             SemanticErrorCode::TypeMismatch
+        );
+    }
+
+    #[test]
+    fn if_condition_requires_boolean() {
+        let mut checker = TypeChecker::new();
+        let stmt = Stmt::If(Box::new(IfStmt {
+            cond: Expr::IntLit { value: 1, ty: None },
+            then_branch: Block { stmts: Vec::new() },
+            else_branch: None,
+        }));
+
+        checker.check_statement(&stmt);
+
+        assert!(
+            checker
+                .diagnostics()
+                .iter()
+                .any(|diag| diag.code == SemanticErrorCode::ExpectedBoolean)
+        );
+    }
+
+    #[test]
+    fn while_condition_accepts_boolean() {
+        let mut checker = TypeChecker::new();
+        let stmt = Stmt::While {
+            cond: Expr::Binary {
+                op: BinaryOp::Eq,
+                left: Box::new(Expr::IntLit { value: 1, ty: None }),
+                right: Box::new(Expr::IntLit { value: 1, ty: None }),
+            },
+            body: Block { stmts: Vec::new() },
+        };
+
+        checker.check_statement(&stmt);
+
+        assert!(
+            checker
+                .diagnostics()
+                .iter()
+                .all(|diag| diag.code != SemanticErrorCode::ExpectedBoolean)
         );
     }
 }

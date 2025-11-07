@@ -7,8 +7,9 @@
 
 use core::ast::{BinaryOp, UnaryOp};
 use core::diag::Span;
+use std::cell::Ref;
 
-use super::arena::Arena;
+use super::arena::{Arena, ArenaIndex};
 use super::ids::{HirBlockId, HirExprId, HirItemId, HirStmtId, SymbolId, TraitImplId, TypeCtxId};
 use super::types::TypeContext;
 
@@ -183,6 +184,20 @@ pub enum HirStmtKind {
         value: HirExprId,
     },
     Block(HirBlockId),
+    If {
+        cond: HirExprId,
+        then_block: HirBlockId,
+        else_block: Option<HirBlockId>,
+    },
+    While {
+        cond: HirExprId,
+        body: HirBlockId,
+    },
+    Loop {
+        body: HirBlockId,
+    },
+    Break,
+    Continue,
     Unsupported {
         reason: String,
     },
@@ -194,6 +209,7 @@ pub struct HirExpr {
     pub ty: TypeCtxId,
     pub span: Option<Span>,
     pub kind: HirExprKind,
+    pub const_value: Option<HirLiteral>,
 }
 
 /// Expression variants supported by the lowering MVP.
@@ -227,11 +243,51 @@ pub enum HirExprKind {
 }
 
 /// Literal variants lowered into HIR.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum HirLiteral {
     Int(i128),
     Float(f64),
     String(String),
     Bool(bool),
     Unit,
+}
+
+impl HirModule {
+    /// Return the slice of root item identifiers.
+    pub fn root_items(&self) -> &[HirItemId] {
+        &self.roots
+    }
+
+    /// Fetch an item by identifier.
+    pub fn item(&self, id: HirItemId) -> Option<Ref<'_, HirItem>> {
+        self.items.get(ArenaIndex::from_raw(id.to_raw() as usize))
+    }
+
+    /// Fetch a function item by identifier.
+    pub fn function(&self, id: HirItemId) -> Option<Ref<'_, HirFunction>> {
+        let item_ref = self.item(id)?;
+        if matches!(item_ref.kind, HirItemKind::Function(_)) {
+            Some(Ref::map(item_ref, |item| match &item.kind {
+                HirItemKind::Function(func) => func,
+                _ => unreachable!(),
+            }))
+        } else {
+            None
+        }
+    }
+
+    /// Fetch a block by identifier.
+    pub fn block(&self, id: HirBlockId) -> Option<Ref<'_, HirBlock>> {
+        self.blocks.get(ArenaIndex::from_raw(id.to_raw() as usize))
+    }
+
+    /// Fetch a statement by identifier.
+    pub fn stmt(&self, id: HirStmtId) -> Option<Ref<'_, HirStmt>> {
+        self.stmts.get(ArenaIndex::from_raw(id.to_raw() as usize))
+    }
+
+    /// Fetch an expression by identifier.
+    pub fn expr(&self, id: HirExprId) -> Option<Ref<'_, HirExpr>> {
+        self.exprs.get(ArenaIndex::from_raw(id.to_raw() as usize))
+    }
 }

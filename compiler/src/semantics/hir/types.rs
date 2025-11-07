@@ -91,7 +91,7 @@ impl TypeContext {
         let float = ctx.intern_concrete(TypeId::float());
         let string = ctx.intern_concrete(TypeId::string());
         let bool = ctx.intern_concrete(TypeId::bool());
-        let unit = ctx.intern_concrete(TypeId::new("unit"));
+        let unit = ctx.intern_concrete(TypeId::unit());
         (
             ctx,
             PrimitiveTypes {
@@ -103,6 +103,18 @@ impl TypeContext {
                 unit,
             },
         )
+    }
+
+    /// Retrieve the primitive type handles used throughout the type context.
+    pub fn primitives(&self) -> PrimitiveTypes {
+        PrimitiveTypes {
+            any: self.intern(TypeInfo::Any),
+            int: self.intern_concrete(TypeId::int()),
+            float: self.intern_concrete(TypeId::float()),
+            string: self.intern_concrete(TypeId::string()),
+            bool: self.intern_concrete(TypeId::bool()),
+            unit: self.intern_concrete(TypeId::unit()),
+        }
     }
 }
 
