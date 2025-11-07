@@ -131,7 +131,7 @@ mod tests {
         );
 
         let rendered = lower_and_format(&[Item::Impl(impl_block)]);
-    let expected = "HIRModule {\n  items: 1, trait_impls: 1\n    trait_impl #0\n      impl Vector for Iterable\n        fn next(self: int) -> int\n          block -> int {\n            return 1 : int;\n          }\n  trait_impl_table {\n        Vector for Iterable -> 1 methods\n  }\n}\n";
+        let expected = "HIRModule {\n  items: 1, trait_impls: 1\n    trait_impl #0\n      impl Vector for Iterable\n        fn next(self: int) -> int\n          block -> int {\n            return 1 : int;\n          }\n  trait_impl_table {\n        Vector for Iterable -> 1 methods\n  }\n}\n";
 
         assert_eq!(rendered, expected);
     }
