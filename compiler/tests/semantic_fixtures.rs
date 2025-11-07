@@ -16,6 +16,7 @@ fn semantic_fixture_expectations() {
     for fixture in fixtures {
         let source = fs::read_to_string(&fixture)
             .unwrap_or_else(|err| panic!("failed to read {:?}: {}", fixture, err));
+        let source = normalize_line_endings(source);
 
         let parse_output = parse_source(&source);
         let mut reports = Vec::new();
