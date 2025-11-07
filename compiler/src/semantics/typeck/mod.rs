@@ -15,6 +15,7 @@ use core::ast::{BinaryOp, TypeIdentKind, UnaryOp};
 use core::diag::Span;
 
 use crate::semantics::hir::{PrimitiveTypes, TypeContext, TypeCtxId, TypeInfo};
+use std::collections::HashSet;
 
 const EMPTY_SPAN: Span = Span { start: 0, end: 0 };
 
@@ -24,6 +25,7 @@ pub struct TypeChecker {
     pub types: TypeContext,
     pub primitives: PrimitiveTypes,
     diagnostics: Vec<SemanticDiagnostic>,
+    seen_diagnostics: HashSet<DiagnosticKey>,
 }
 
 impl TypeChecker {
@@ -34,6 +36,7 @@ impl TypeChecker {
             types,
             primitives,
             diagnostics: Vec::new(),
+            seen_diagnostics: HashSet::new(),
         }
     }
 
@@ -284,7 +287,7 @@ impl TypeChecker {
 
     fn ensure_assignable(&mut self, target: TypeCtxId, value: TypeCtxId, span: Option<Span>) {
         if target != value && target != self.primitives.any {
-            self.diagnostics.push(SemanticDiagnostic::new(
+            self.push_diagnostic(
                 format!(
                     "cannot assign `{}` to `{}`",
                     self.type_label(value),
@@ -292,7 +295,7 @@ impl TypeChecker {
                 ),
                 span.unwrap_or(EMPTY_SPAN),
                 SemanticErrorCode::TypeMismatch,
-            ));
+            );
         }
     }
 
@@ -327,28 +330,47 @@ impl TypeChecker {
     }
 
     fn emit_missing_type(&mut self, span: &Option<Span>) {
-        self.diagnostics.push(SemanticDiagnostic::new(
-            "missing type annotation and no initializer",
+        self.push_diagnostic(
+            "missing type annotation and no initializer".to_string(),
             span.clone().unwrap_or(EMPTY_SPAN),
             SemanticErrorCode::MissingTypeAnnotation,
-        ));
+        );
     }
 
     fn emit_unknown_type(&mut self, span: &Option<Span>) {
-        self.diagnostics.push(SemanticDiagnostic::new(
-            "unknown type annotation",
+        self.push_diagnostic(
+            "unknown type annotation".to_string(),
             span.clone().unwrap_or(EMPTY_SPAN),
             SemanticErrorCode::UnknownType,
-        ));
+        );
     }
 
     fn emit_expected_boolean(&mut self, span: Option<Span>) {
-        self.diagnostics.push(SemanticDiagnostic::new(
-            "condition must evaluate to a boolean",
+        self.push_diagnostic(
+            "condition must evaluate to a boolean".to_string(),
             span.unwrap_or(EMPTY_SPAN),
             SemanticErrorCode::ExpectedBoolean,
-        ));
+        );
     }
+
+    fn push_diagnostic(&mut self, message: String, span: Span, code: SemanticErrorCode) {
+        let key = DiagnosticKey {
+            code,
+            span: span.clone(),
+            message: message.clone(),
+        };
+        if self.seen_diagnostics.insert(key) {
+            self.diagnostics
+                .push(SemanticDiagnostic::new(message, span, code));
+        }
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+struct DiagnosticKey {
+    code: SemanticErrorCode,
+    span: Span,
+    message: String,
 }
 
 #[cfg(test)]

@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  compiler-tests:
+    name: Compiler Fixtures
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo builds
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run compiler semantic fixtures
+        run: cargo test -p compiler semantic_fixture_expectations
+
+      - name: Run compiler test suite
+        run: cargo test -p compiler --tests
